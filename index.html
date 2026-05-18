@@ -1,690 +1,829 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Rekber Amanah Bandung - Jual Keahlian Halal</title>
+<meta name="theme-color" content="#0a7d4a">
+<title>Rekber Amanah Bandung</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <style>
 :root{
-  --green:#0a7d4a; --green-2:#0f9d5d; --green-light:#e6f4ed; --green-dark:#065a35;
-  --bg:#f6faf8; --text:#133122; --muted:#6b7c75; --card:#ffffff; --border:#e4efe8;
-  --shadow:0 8px 28px rgba(10,125,74,.09); --radius:20px;
+  --green:#0a7d4a;
+  --green-light:#e6f4ed;
+  --ink:#0f172a;
+  --muted:#64748b;
+  --border:#e2e8f0;
+  --bg:#f6f7f8;
+  --card:#ffffff;
+  --red:#ef4444;
 }
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
-  background:#dfeee6; color:var(--text); line-height:1.45;
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,Arial,sans-serif;
+  background:var(--bg);
+  color:var(--ink);
   -webkit-font-smoothing:antialiased;
 }
-.app{
-  max-width:440px;margin:0 auto;min-height:100vh;background:var(--bg);
-  position:relative;display:flex;flex-direction:column;box-shadow:0 0 60px rgba(0,0,0,.08)
+.app{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);position:relative;padding-bottom:84px}
+header{
+  position:sticky;top:0;z-index:30;
+  background:var(--green);
+  color:white;
+  padding:14px 16px 12px;
+  box-shadow:0 2px 10px rgba(0,0,0,.08);
 }
-.app-header{
-  background:linear-gradient(165deg,var(--green) 0%, var(--green-2) 85%);
-  color:#fff;padding:26px 20px 34px;border-radius:0 0 32px 32px;
-  position:relative;overflow:hidden;
+.head-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{font-weight:800;font-size:18px;letter-spacing:.2px}
+.sub{font-size:12px;opacity:.9;margin-top:2px}
+.status{display:flex;align-items:center;gap:6px;font-size:11px;background:rgba(255,255,255,.12);padding:5px 9px;border-radius:20px;border:1px solid rgba(255,255,255,.18)}
+.dot{width:7px;height:7px;border-radius:50%;background:#ffd166;animation:pulse 1.5s infinite}
+.dot.on{background:#4ade80;animation:none}
+.dot.off{background:#fca5a5;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+main{padding:16px}
+.page{display:none;animation:fade .2s ease}
+.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+.card{
+  background:var(--card);
+  border-radius:18px;
+  padding:16px;
+  box-shadow:0 4px 16px rgba(2,6,23,.05);
+  border:1px solid #edf2f7;
+  margin-bottom:14px;
 }
-.app-header::before{
-  content:"";position:absolute;inset:0;
-  background-image:
-    radial-gradient(circle at 15% 20%,rgba(255,255,255,.18) 0 2px,transparent 3px),
-    radial-gradient(circle at 85% 30%,rgba(255,255,255,.12) 0 1.5px,transparent 2.5px),
-    radial-gradient(circle at 40% 80%,rgba(255,255,255,.1) 0 2px,transparent 3px);
-  background-size:44px 44px;opacity:.7
+.card-title{font-weight:700;font-size:15px;margin:0 0 8px}
+.card-hint{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.4}
+
+label{font-size:12.5px;font-weight:600;color:#334155;margin:0 0 6px;display:block}
+input,textarea,select{
+  width:100%;padding:12px 13px;border:1.5px solid var(--border);border-radius:12px;
+  font-size:15px;background:#fff;outline:none;transition:.15s;
+  font-family:inherit;
 }
-.header-top{display:flex;align-items:center;gap:12px;position:relative;z-index:2}
-.logo{width:44px;height:44px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);
-  backdrop-filter:blur(8px);border-radius:14px;display:grid;place-items:center;font-size:24px;box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
-.app-header h1{font-size:22px;font-weight:800;letter-spacing:.2px}
-.app-header p{opacity:.95;font-size:14px;margin-top:3px;position:relative;z-index:2}
-.badge-halal{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);
-  padding:6px 11px;border-radius:999px;font-size:12px;font-weight:600;margin-top:12px;
-  border:1px solid rgba(255,255,255,.28);position:relative;z-index:2}
-.bandung-silhouette{position:absolute;bottom:-2px;left:0;right:0;height:56px;opacity:.18;z-index:1;
-  background:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 60"><path d="M0 50 L30 45 L50 52 L80 40 L110 48 L140 32 L170 44 L200 25 L230 38 L260 30 L290 42 L320 35 L350 46 L380 40 L400 48 L400 60 L0 60Z" fill="white"/></svg>') bottom/cover no-repeat}
-
-main{flex:1;padding:18px 16px 110px;position:relative}
-.view{display:none;animation:fadeUp .35s cubic-bezier(.2,.8,.2,1)}
-.view.active{display:block}
-@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-
-.card{background:var(--card);border-radius:var(--radius);padding:16px;border:1px solid var(--border);box-shadow:var(--shadow)}
-.home-hero{margin-top:-24px;position:relative;z-index:3}
-.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
-.action-btn{
-  background:#fff;border:2px solid var(--border);border-radius:24px;padding:20px 16px;
-  text-align:left;cursor:pointer;transition:.18s;box-shadow:var(--shadow);position:relative;overflow:hidden
-}
-.action-btn:active{transform:scale(.97)}
-.action-btn.primary{border-color:var(--green);background:linear-gradient(180deg,#fff, #f2faf5)}
-.action-btn .icon{width:48px;height:48px;border-radius:14px;background:var(--green-light);display:grid;place-items:center;font-size:26px;margin-bottom:10px;color:var(--green-dark)}
-.action-btn h3{font-size:16px;font-weight:750;margin-bottom:4px}
-.action-btn p{font-size:12.8px;color:var(--muted);line-height:1.35}
-.ripple{position:absolute;border-radius:50%;background:rgba(10,125,74,.15);transform:scale(0);animation:ripple .6s linear}
-@keyframes ripple{to{transform:scale(4);opacity:0}}
-
-.trust-row{display:flex;gap:7px;margin-top:14px;flex-wrap:wrap}
-.trust-chip{background:#f1f8f4;border:1px dashed #b6dfc9;color:#0a5a36;padding:6px 10px;border-radius:999px;font-size:11.5px;font-weight:600;display:flex;align-items:center;gap:5px}
-
-.section-title{font-size:15.5px;font-weight:800;margin:24px 4px 12px;color:#1b3b2e;display:flex;align-items:center;justify-content:space-between}
-.bdg-vibe{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;padding:0 4px}
-
-.list-clean{display:grid;gap:10px}
-.item-row{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:16px;background:#fff}
-.item-row .avatar{width:40px;height:40px;border-radius:12px;background:var(--green-light);display:grid;place-items:center;font-weight:700;color:var(--green-dark);flex-shrink:0}
-.item-row .meta{flex:1;min-width:0}
-.item-row .meta b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.item-row .meta span{font-size:12px;color:var(--muted)}
-
-/* Onboarding */
-.chat-wrap{display:flex;flex-direction:column;gap:14px}
-.bot-msg{display:flex;gap:10px;align-items:flex-start}
-.bot-avatar{width:36px;height:36px;border-radius:11px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:18px;flex-shrink:0;box-shadow:0 4px 12px rgba(10,125,74,.25)}
-.bubble{background:#fff;border:1px solid var(--border);padding:13px 14px;border-radius:18px 18px 18px 6px;box-shadow:var(--shadow);max-width:85%;font-size:14.5px}
-.bubble b{color:var(--green-dark)}
-.bubble .hint{display:block;margin-top:6px;font-size:12.5px;color:var(--muted);font-style:italic}
-.user-input{display:flex;gap:8px;margin-top:4px;position:sticky;bottom:90px;background:var(--bg);padding:8px 0}
-.user-input input{flex:1;padding:14px 16px;border-radius:14px;border:2px solid var(--border);font-size:15px;background:#fff;outline:none;transition:.2s}
-.user-input input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(10,125,74,.12)}
-.user-input button{width:48px;height:48px;border-radius:14px;border:none;background:var(--green);color:#fff;font-size:20px;cursor:pointer;box-shadow:0 6px 16px rgba(10,125,74,.3)}
+input:focus,textarea:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(10,125,74,.12)}
+textarea{min-height:90px;resize:vertical}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.row{display:flex;gap:10px}
 
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.chip{padding:9px 14px;border-radius:999px;border:1.5px solid var(--border);background:#fff;font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s;user-select:none}
-.chip.active{background:var(--green);color:#fff;border-color:var(--green);box-shadow:0 4px 12px rgba(10,125,74,.2)}
-.chip.detected{border-style:dashed;border-color:#8bc4a9}
+.chip{
+  padding:8px 12px;border-radius:999px;border:1.5px solid var(--border);
+  background:#fff;font-size:13px;cursor:pointer;user-select:none;
+  transition:.15s;font-weight:500;color:#334155
+}
+.chip.active{background:var(--green);color:white;border-color:var(--green)}
+.chip.detected{border-color:var(--green);background:var(--green-light);color:var(--green)}
 
-.form-card{margin-top:12px}
-.form-card h3{font-size:16px;margin-bottom:12px}
-.form-group{margin-bottom:12px}
-.form-group label{font-size:12.5px;color:var(--muted);display:block;margin-bottom:6px;font-weight:600}
-.form-group select,.form-group input{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--border);font-size:15px;background:#fcfefc;outline:none}
-.form-group select:focus,.form-group input:focus{border-color:var(--green);background:#fff}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.skill-form{border:1.5px dashed #cbd5e1;border-radius:14px;padding:12px;margin-top:10px;background:#fbfefd}
+.skill-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.skill-name{font-weight:700;font-size:14px;color:var(--green)}
+.skill-remove{font-size:12px;color:var(--red);background:none;border:none;cursor:pointer}
+.switch{display:flex;align-items:center;gap:8px;font-size:13px;color:#334155;background:#f1f5f9;padding:10px 12px;border-radius:10px;border:1px solid var(--border);cursor:pointer}
+.switch input{width:auto;accent-color:var(--green)}
 
-.summary-card{text-align:center;padding:22px}
-.skor-circle{width:110px;height:110px;margin:0 auto 14px;position:relative}
-.skor-circle svg{transform:rotate(-90deg)}
-.skor-circle .bg{fill:none;stroke:#e5f1ea;stroke-width:10}
-.skor-circle .fg{fill:none;stroke:var(--green);stroke-width:10;stroke-linecap:round;stroke-dasharray:283;stroke-dashoffset:0;transition:1s}
-.skor-value{position:absolute;inset:0;display:grid;place-items:center;font-size:28px;font-weight:800;color:var(--green-dark)}
-.skor-value small{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-top:-2px}
+.btn{
+  width:100%;padding:14px;border:none;border-radius:13px;font-weight:700;font-size:15px;
+  cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center;gap:8px
+}
+.btn-primary{background:var(--green);color:white;box-shadow:0 6px 14px rgba(10,125,74,.22)}
+.btn-primary:active{transform:translateY(1px)}
+.btn-ghost{background:#f1f5f9;color:#334155}
+.btn:disabled{opacity:.6;cursor:not-allowed}
 
-.btn{width:100%;padding:15px;border-radius:14px;border:none;font-weight:700;font-size:15.5px;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;gap:8px}
-.btn:active{transform:scale(.98)}
-.btn-primary{background:var(--green);color:#fff;box-shadow:0 8px 20px rgba(10,125,74,.25)}
-.btn-secondary{background:var(--green-light);color:var(--green-dark)}
-.btn-ghost{background:#fff;border:1.5px solid var(--border);color:var(--text)}
+.notice{
+  padding:10px 12px;border-radius:12px;font-size:13px;margin-top:10px;
+  background:#fff7ed;border:1px solid #fed7aa;color:#9a3412
+}
+.success{
+  padding:12px;border-radius:12px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;
+  font-size:14px;font-weight:600;text-align:center
+}
 
-/* Marketplace */
-.search-bar{position:relative;margin-bottom:12px}
-.search-bar input{width:100%;padding:13px 14px 13px 42px;border-radius:14px;border:1.5px solid var(--border);font-size:15px;background:#fff;outline:none}
-.search-bar input:focus{border-color:var(--green)}
-.search-bar .icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:18px;opacity:.6}
+.jasa-list{display:flex;flex-direction:column;gap:12px}
+.jasa-card{
+  background:var(--card);border-radius:16px;padding:14px;border:1px solid #edf2f7;
+  box-shadow:0 3px 10px rgba(2,6,23,.04)
+}
+.jasa-head{display:flex;gap:12px;align-items:center}
+.avatar{
+  width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,var(--green),#0eb368);
+  display:flex;align-items:center;justify-content:center;color:white;font-weight:800;font-size:18px;flex-shrink:0
+}
+.jasa-meta{flex:1;min-width:0}
+.jasa-name{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jasa-skill{font-size:12.5px;color:var(--muted);margin-top:2px}
+.jasa-skor{display:flex;align-items:center;gap:4px;background:var(--green-light);color:var(--green);padding:5px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.jasa-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)}
+.tarif{font-weight:700;color:#0f172a}
+.tarif span{font-size:12px;color:var(--muted);font-weight:500}
+.btn-pesan{padding:8px 12px;border-radius:10px;background:var(--green);color:white;border:none;font-size:13px;font-weight:600;cursor:pointer}
 
-.categories{display:flex;gap:8px;overflow:auto;padding:2px 2px 10px;margin:0 -4px;scrollbar-width:none}
-.categories::-webkit-scrollbar{display:none}
-.cat{padding:8px 14px;border-radius:999px;background:#fff;border:1.5px solid var(--border);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;flex-shrink:0}
-.cat.active{background:var(--green);color:#fff;border-color:var(--green)}
+.empty{
+  text-align:center;padding:32px 16px;color:var(--muted)
+}
+.empty-icon{font-size:40px;margin-bottom:8px}
 
-.seller-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.seller-card{background:#fff;border:1px solid var(--border);border-radius:18px;padding:12px;cursor:pointer;transition:.18s;box-shadow:0 4px 14px rgba(0,0,0,.04)}
-.seller-card:active{transform:scale(.97)}
-.seller-card .top{display:flex;gap:10px;align-items:center;margin-bottom:8px}
-.seller-card .ava{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,var(--green-light),#d8f0e3);display:grid;place-items:center;font-weight:800;color:var(--green-dark)}
-.seller-card b{font-size:14px;display:block}
-.seller-card small{font-size:11.5px;color:var(--muted)}
-.skill-tag{display:inline-block;background:#f5faf7;border:1px solid #d9ebe1;color:#1a5d3f;padding:5px 8px;border-radius:8px;font-size:11.5px;font-weight:650;margin-top:6px}
-.price{font-weight:800;color:var(--green-dark);margin-top:6px;font-size:14px}
-.rating{display:flex;align-items:center;gap:4px;font-size:12px;color:#b7790d;font-weight:700;margin-top:4px}
+.bottom-nav{
+  position:fixed;bottom:0;left:0;right:0;z-index:40;
+  background:rgba(255,255,255,.9);backdrop-filter:blur(10px);
+  border-top:1px solid var(--border);
+}
+.nav-inner{max-width:480px;margin:0 auto;display:flex;height:74px;padding:0 8px 8px}
+.tab-btn{
+  flex:1;background:none;border:none;padding:8px 4px;border-radius:14px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;transition:.15s
+}
+.tab-btn svg{width:24px;height:24px;stroke-width:2}
+.tab-btn.active{color:var(--green);background:var(--green-light)}
 
-.seller-header{display:flex;gap:14px;align-items:center}
-.seller-header .ava{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,var(--green),var(--green-2));color:#fff;display:grid;place-items:center;font-size:24px;font-weight:800;box-shadow:0 8px 20px rgba(10,125,74,.3)}
-.seller-header h2{font-size:20px}
-.seller-header .meta{font-size:13px;color:var(--muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap}
+.badge{font-size:11px;background:#fee2e2;color:#b91c1c;padding:3px 7px;border-radius:999px;font-weight:700;margin-left:6px}
+.profile-bar{display:flex;align-items:center;justify-content:space-between;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:12px;margin-bottom:12px;font-size:13px}
+.profile-bar strong{color:var(--green)}
 
-.divider{height:1px;background:var(--border);margin:16px 0}
-
-.invoice-card{background:linear-gradient(180deg,#fff,#f7fcf9);border:2px solid #cbe7d7}
-.invoice-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.invoice-head h2{font-size:18px}
-.secure-badge{background:#e8f5ee;color:#0a5a36;padding:5px 9px;border-radius:8px;font-size:11px;font-weight:700;border:1px solid #c1e2d0}
-.invoice-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px dashed var(--border);font-size:14.5px}
-.invoice-row.total{border:none;font-weight:800;font-size:17px;padding-top:14px}
-.va-box{background:#0f172a;color:#fff;border-radius:14px;padding:14px;margin:14px 0;text-align:center}
-.va-box small{opacity:.7;font-size:12px}
-.va-box b{font-size:20px;letter-spacing:1.5px;display:block;margin:6px 0;font-family:ui-monospace,monospace}
-.copy-btn{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer}
-.timer{background:#fff7e6;border:1px solid #ffe0a3;color:#8a5c00;padding:10px;border-radius:12px;text-align:center;font-weight:700;margin-bottom:12px}
-
-/* Bottom nav */
-.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:440px;background:rgba(255,255,255,.9);backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px 6px 20px;z-index:50}
-.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:12px;cursor:pointer;color:var(--muted);transition:.18s;border:none;background:none;font-family:inherit}
-.nav-item .ic{font-size:20px;line-height:1}
-.nav-item span{font-size:10.5px;font-weight:650;letter-spacing:.2px}
-.nav-item.active{color:var(--green);background:var(--green-light)}
-
-.demo-note{background:#fff8e1;border-top:1px solid #ffe9b3;border-bottom:1px solid #ffe9b3;color:#7a5a0a;text-align:center;padding:10px 12px;font-size:12px;font-weight:600;position:sticky;bottom:72px;z-index:40}
-footer{text-align:center;padding:14px;font-size:11px;color:#8a9f94;padding-bottom:90px}
-
-.toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(20px);background:#132d22;color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:.3s;z-index:100;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:90%;text-align:center}
+.toast{
+  position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);
+  background:#0f172a;color:white;padding:12px 16px;border-radius:12px;font-size:14px;font-weight:600;
+  opacity:0;transition:.25s;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.2);white-space:nowrap
+}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-
-.empty{text-align:center;padding:40px 20px;color:var(--muted)}
-.empty .emoji{font-size:40px;margin-bottom:10px}
+.skeleton{height:88px;border-radius:14px;background:linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%);background-size:200% 100%;animation:shimmer 1.2s infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 </style>
 </head>
 <body>
 <div class="app">
-  <header class="app-header">
-    <div class="header-top">
-      <div class="logo">🤝</div>
+  <header>
+    <div class="head-top">
       <div>
-        <h1>Rekber Amanah</h1>
-        <p>Jual Keahlian Halal, Aman dengan Rekber</p>
+        <div class="brand">Rekber Amanah Bandung</div>
+        <div class="sub">Jasa halal • Pembayaran aman</div>
       </div>
+      <div class="status"><span class="dot" id="conn-dot"></span><span id="conn-text">Cek koneksi</span></div>
     </div>
-    <div class="badge-halal">✓ 100% Halal & Amanah • Bandung</div>
-    <div class="bandung-silhouette"></div>
   </header>
 
   <main>
-    <!-- HOME -->
-    <section id="view-home" class="view active">
-      <div class="home-hero">
-        <div class="action-grid">
-          <button class="action-btn primary" id="btnBisaKerja">
-            <div class="icon">💼</div>
-            <h3>Saya Bisa Kerja</h3>
-            <p>Tawarkan keahlian halalmu, dibayar via rekber</p>
-          </button>
-          <button class="action-btn" id="btnButuhJasa">
-            <div class="icon">🔍</div>
-            <h3>Saya Butuh Jasa</h3>
-            <p>Cari tukang, ojek, les, dll di Bandung</p>
-          </button>
-        </div>
-        <div class="trust-row">
-          <div class="trust-chip">🛡️ Rekber Aman</div>
-          <div class="trust-chip">🕌 Tanpa Riba</div>
-          <div class="trust-chip">📍 Area Bandung Raya</div>
-        </div>
+    <!-- SAYA BISA -->
+    <section id="page-saya" class="page active">
+      <div id="profile-bar" class="profile-bar" style="display:none">
+        <div>Profil aktif: <strong id="pb-name">-</strong></div>
+        <button class="btn-ghost" style="padding:6px 10px;width:auto;font-size:12px" id="btn-edit">Ubah</button>
       </div>
 
-      <div class="section-title">Paling Dicari di Bandung</div>
-      <div class="bdg-vibe">📍 Dago • Buahbatu • Cimahi • Ujungberung</div>
-      <div class="list-clean" id="home-popular"></div>
-
-      <div class="section-title">Kenapa Rekber Amanah?</div>
       <div class="card">
-        <div style="display:grid;gap:12px;font-size:14px">
-          <div style="display:flex;gap:10px"><span style="font-size:20px">🤝</span><div><b>Uang Aman di Tengah</b><br><span style="color:var(--muted);font-size:13px">Dana ditahan rekber, cair setelah kerja beres & halal</span></div></div>
-          <div style="display:flex;gap:10px"><span style="font-size:20px">✅</span><div><b>Skor Amanah</b><br><span style="color:var(--muted);font-size:13px">Penjual dinilai jujur, tepat waktu, hasil halal</span></div></div>
-          <div style="display:flex;gap:10px"><span style="font-size:20px">🕌</span><div><b>Filter Keahlian Halal</b><br><span style="color:var(--muted);font-size:13px">Tanpa judi, riba, atau maksiat</span></div></div>
+        <h2 class="card-title">Daftar jadi penyedia jasa</h2>
+        <p class="card-hint">Isi data diri, jelaskan keahlianmu. Sistem akan deteksi otomatis.</p>
+        
+        <div class="grid-2" style="margin-bottom:12px">
+          <div>
+            <label>Nama Lengkap</label>
+            <input id="in-nama" placeholder="Contoh: Asep Saeful" autocomplete="name">
+          </div>
+          <div>
+            <label>No HP (WA)</label>
+            <input id="in-hp" placeholder="0812xxxx" inputmode="tel">
+          </div>
+        </div>
+        <div>
+          <label>Kota</label>
+          <input id="in-kota" value="Bandung">
         </div>
       </div>
-    </section>
 
-    <!-- ONBOARDING -->
-    <section id="view-onboarding" class="view">
-      <div class="section-title" style="margin-top:4px"><span id="onb-title">Wawancara Keahlian</span><span id="onb-step" style="font-size:12px;color:var(--muted);font-weight:600">Langkah 1/4</span></div>
-      <div id="onboarding-content"></div>
-    </section>
-
-    <!-- MARKETPLACE -->
-    <section id="view-marketplace" class="view">
-      <div class="search-bar">
-        <span class="icon">🔍</span>
-        <input id="searchInput" placeholder="Cari keahlian: cuci piring, coding...">
+      <div class="card">
+        <h2 class="card-title">Kamu bisa apa aja yang halal?</h2>
+        <p class="card-hint">Tulis bebas, contoh: "bisa cuci piring, setrika, dan antar barang pakai motor"</p>
+        <textarea id="in-interview" placeholder="Tulis keahlianmu di sini..."></textarea>
+        <div id="auto-hint" class="notice" style="display:none"></div>
+        
+        <div style="margin-top:14px">
+          <label>Pilih keahlian (bisa ditambah/hapus)</label>
+          <div class="chips" id="chips"></div>
+        </div>
       </div>
-      <div class="categories" id="catList"></div>
-      <div class="seller-grid" id="sellerGrid" style="margin-top:8px"></div>
+
+      <div class="card" id="skill-detail-card" style="display:none">
+        <h2 class="card-title">Detail tiap keahlian <span class="badge" id="skill-count">0</span></h2>
+        <div id="skills-container"></div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-simpan">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Simpan Profil Saya
+      </button>
+      <div id="save-msg" style="margin-top:12px"></div>
     </section>
 
-    <!-- SELLER DETAIL -->
-    <section id="view-seller" class="view">
-      <div id="sellerDetail"></div>
-    </section>
+    <!-- CARI JASA -->
+    <section id="page-cari" class="page">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <h2 class="card-title" style="margin:0">Jasa di Bandung</h2>
+            <p class="card-hint" style="margin:4px 0 0">Rekber = uang aman sampai kerja beres</p>
+          </div>
+          <button class="btn-ghost" style="width:auto;padding:8px 12px" id="btn-refresh">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          </button>
+        </div>
+      </div>
 
-    <!-- INVOICE -->
-    <section id="view-invoice" class="view">
-      <div id="invoiceWrap"></div>
-    </section>
-
-    <!-- SAYA JUAL -->
-    <section id="view-jual" class="view">
-      <div id="jualWrap"></div>
-    </section>
-
-    <!-- PESANAN -->
-    <section id="view-pesanan" class="view">
-      <div class="section-title" style="margin-top:4px">Pesanan Saya</div>
-      <div id="ordersWrap"></div>
+      <div id="jasa-list" class="jasa-list">
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+      </div>
     </section>
   </main>
 
-  <div class="demo-note">Ini demo offline — nanti tersambung ke Supabase & Xendit kamu</div>
-  <footer>Demo P1 - siap sambung ke database yang sudah kamu buat</footer>
-
   <nav class="bottom-nav">
-    <button class="nav-item active" data-view="home">
-      <div class="ic">🏠</div><span>Beranda</span>
-    </button>
-    <button class="nav-item" data-view="marketplace">
-      <div class="ic">🧰</div><span>Cari Jasa</span>
-    </button>
-    <button class="nav-item" data-view="jual">
-      <div class="ic">💼</div><span>Saya Jual</span>
-    </button>
-    <button class="nav-item" data-view="pesanan">
-      <div class="ic">📦</div><span>Pesanan</span>
-    </button>
+    <div class="nav-inner">
+      <button class="tab-btn active" data-tab="saya">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Z"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+        Saya Bisa
+      </button>
+      <button class="tab-btn" data-tab="cari">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Cari Jasa
+      </button>
+    </div>
   </nav>
-
-  <div class="toast" id="toast"></div>
 </div>
 
-<script>
-const SKILLS = ["Cuci Piring","Setrika","Beres-beres Rumah","Ojek Motor","Antar Barang","Supir Mobil","Coding Website","Desain Canva","Jahit Baju","Masak Catering","Les Privat","Tukang Listrik","Tukang Air","Berkebun","Jaga Anak"];
-const SKILL_KEYWORDS = {
-  "Cuci Piring":["cuci piring","cuci","piring"],
-  "Setrika":["setrika","gosok"],
-  "Beres-beres Rumah":["beres","beberes","bersih","rumah","beres-beres"],
-  "Ojek Motor":["ojek","motor","ngojek"],
-  "Antar Barang":["antar","antar barang","kurir","delivery"],
-  "Supir Mobil":["supir","sopir","mobil","nyetir","driver"],
-  "Coding Website":["coding","website","web","program","koding","nextjs","html"],
-  "Desain Canva":["desain","canva","poster","feed","ig"],
-  "Jahit Baju":["jahit","menjahit","perm ak","baju","jahit baju"],
-  "Masak Catering":["masak","catering","katering","masakan"],
-  "Les Privat":["les","privat","ngajar","guru","ngaji"],
-  "Tukang Listrik":["listrik","kabel","instalasi listrik"],
-  "Tukang Air":["air","pipa","ledeng","wastafel","tukang air"],
-  "Berkebun":["kebun","tanaman","berkebun","taman"],
-  "Jaga Anak":["jaga anak","babysit","asuh","jaga bayi"]
-};
-const CATEGORIES = {
-  "Semua": SKILLS,
-  "Rumah Tangga":["Cuci Piring","Setrika","Beres-beres Rumah","Masak Catering","Jaga Anak","Berkebun"],
-  "Antar-Jemput":["Ojek Motor","Antar Barang","Supir Mobil"],
-  "Digital":["Coding Website","Desain Canva","Les Privat"],
-  "Tukang":["Tukang Listrik","Tukang Air","Jahit Baju"]
-};
-const DUMMY_SELLERS = [
- {id:1,nama:"Teh Siti",lokasi:"Buahbatu",rating:4.9,ulasan:127,skills:[{name:"Beres-beres Rumah",tarif:35000,satuan:"/jam"},{name:"Cuci Piring",tarif:30000,satuan:"/jam"}],amanah:98,foto:"TS",bio:"Amanah, berpengalaman 3 tahun beres-beres rumah di Bandung. InsyaAllah bersih & rapi."},
- {id:2,nama:"Kang Asep",lokasi:"Cibiru",rating:4.8,ulasan:214,skills:[{name:"Ojek Motor",tarif:12000,satuan:"/trip"},{name:"Antar Barang",tarif:15000,satuan:"/trip"}],amanah:96,foto:"KA",bio:"Siap antar cepat area Bandung Timur. Motor terawat, helm bersih."},
- {id:3,nama:"Bu Yayah",lokasi:"Dago",rating:5.0,ulasan:89,skills:[{name:"Masak Catering",tarif:50000,satuan:"/menu"},{name:"Jaga Anak",tarif:40000,satuan:"/jam"}],amanah:100,foto:"BY",bio:"Masakan Sunda halal, bisa untuk acara keluarga & kajian."},
- {id:4,nama:"Mang Udin",lokasi:"Cimahi",rating:4.7,ulasan:156,skills:[{name:"Supir Mobil",tarif:150000,satuan:"/hari"},{name:"Tukang Air",tarif:75000,satuan:"/jam"}],amanah:94,foto:"MU",bio:"Supir pribadi & luar kota. SIM A, sabar, hafal jalan Bandung."},
- {id:5,nama:"Rian Firmansyah",lokasi:"Ujungberung",rating:4.9,ulasan:67,skills:[{name:"Coding Website",tarif:150000,satuan:"/jam"}],amanah:97,foto:"RF",bio:"Fullstack Next.js untuk UMKM Bandung. Amanah, no tipu-tipu."},
- {id:6,nama:"Dinda",lokasi:"Antapani",rating:4.8,ulasan:103,skills:[{name:"Desain Canva",tarif:25000,satuan:"/desain"}],amanah:95,foto:"DD",bio:"Desain feed IG, poster kajian, banner toko halal."},
- {id:7,nama:"Teh Lilis",lokasi:"Bandung Kota",rating:4.9,ulasan:78,skills:[{name:"Jahit Baju",tarif:35000,satuan:"/pcs"},{name:"Setrika",tarif:5000,satuan:"/pcs"}],amanah:99,foto:"TL",bio:"Jahit kebaya & permak cepat 1 hari. Rapih insyaAllah."},
- {id:8,nama:"Kang Dedi",lokasi:"Kopo",rating:4.6,ulasan:142,skills:[{name:"Tukang Listrik",tarif:80000,satuan:"/jam"}],amanah:93,foto:"KD",bio:"Instalasi listrik rumah & kosan. Aman, tidak asal sambung."},
- {id:9,nama:"Pak Ahmad",lokasi:"Ciumbuleuit",rating:5.0,ulasan:54,skills:[{name:"Les Privat",tarif:50000,satuan:"/jam"},{name:"Berkebun",tarif:60000,satuan:"/jam"}],amanah:100,foto:"PA",bio:"Guru ngaji & matematika SD-SMP. Berkebun hidroponik juga bisa."},
-];
+<div class="toast" id="toast"></div>
 
-const $ = s=>document.querySelector(s);
-const $$ = s=>document.querySelectorAll(s);
-const toast = (msg)=>{ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200) };
-const rupiah = n => 'Rp '+Number(n).toLocaleString('id-ID');
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
 
-let state = {
-  currentView:'home',
-  onboarding:{step:1,input:'',skills:[],details:{},currentSkillIdx:0},
-  selectedCategory:'Semua',
-  selectedSeller:null,
-  selectedSkill:null,
-  search:''
-};
+const SUPABASE_URL = 'https://eangquqqiadhapolrwti.supabase.co'
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVhbmdxdXFxaWFkaGFwb2xyd3RpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwNzU5MjMsImV4cCI6MjA5NDY1MTkyM30.mSXYwxBmbl3lvucqmhEgO8WGHOJt4qZ8na9A219XDW8'
 
-function initStorage(){
-  if(!localStorage.getItem('sellers')) localStorage.setItem('sellers',JSON.stringify(DUMMY_SELLERS));
-  if(!localStorage.getItem('orders')) localStorage.setItem('orders',JSON.stringify([]));
-}
-function getSellers(){ return JSON.parse(localStorage.getItem('sellers')||'[]') }
-function saveSellers(arr){ localStorage.setItem('sellers',JSON.stringify(arr)) }
-function getOrders(){ return JSON.parse(localStorage.getItem('orders')||'[]') }
-function saveOrders(arr){ localStorage.setItem('orders',JSON.stringify(arr)) }
-function getMyProfile(){ return JSON.parse(localStorage.getItem('my_profile')||'null') }
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-function showView(id){
-  $$('.view').forEach(v=>v.classList.remove('active'));
-  $('#view-'+id).classList.add('active');
-  $$('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.view===id));
-  state.currentView=id;
-  window.scrollTo({top:0,behavior:'smooth'});
-  if(id==='marketplace') renderMarketplace();
-  if(id==='jual') renderJual();
-  if(id==='pesanan') renderOrders();
-  if(id==='home') renderHomePopular();
+const ALL_SKILLS = [
+  'Cuci Piring','Setrika','Beres-beres Rumah','Ojek Motor','Antar Barang',
+  'Supir Mobil','Coding Website','Desain Canva','Jahit Baju','Masak Catering',
+  'Les Privat','Tukang Listrik','Tukang Air','Berkebun','Jaga Anak'
+]
+
+const skillKeywords = {
+  'Cuci Piring': ['cuci piring','cuci','piring'],
+  'Setrika': ['setrika','gosok'],
+  'Beres-beres Rumah': ['beres','bersih','rumah','sap','pel','beberes'],
+  'Ojek Motor': ['ojek','motor','antar jemput','ngojek'],
+  'Antar Barang': ['antar barang','kurir','delivery','paket'],
+  'Supir Mobil': ['supir','sopir','nyetir','mobil','driver'],
+  'Coding Website': ['coding','website','web','program','html','php','javascript','ngoding'],
+  'Desain Canva': ['desain','canva','poster','banner'],
+  'Jahit Baju': ['jahit','baju','tailor','menjahit'],
+  'Masak Catering': ['masak','catering','koki','masakan'],
+  'Les Privat': ['les','privat','ngajar','guru','tutor'],
+  'Tukang Listrik': ['listrik','kabel','instalasi'],
+  'Tukang Air': ['air','pipa','ledeng','pompa','tukang air'],
+  'Berkebun': ['kebun','tanam','taman','berkebun'],
+  'Jaga Anak': ['jaga anak','baby','babysitter','ngasuh']
 }
 
-function ripple(e){
-  const btn = e.currentTarget;
-  const r = document.createElement('span');
-  const d = Math.max(btn.clientWidth, btn.clientHeight);
-  r.style.width=r.style.height=d+'px';
-  r.style.left=(e.clientX - btn.getBoundingClientRect().left - d/2)+'px';
-  r.style.top=(e.clientY - btn.getBoundingClientRect().top - d/2)+'px';
-  r.className='ripple';
-  btn.appendChild(r);
-  setTimeout(()=>r.remove(),600);
+let selectedSkills = new Set()
+let profileId = localStorage.getItem('rab_profile_id')
+
+const $ = s => document.querySelector(s)
+const chipsEl = $('#chips')
+const skillsContainer = $('#skills-container')
+const inNama = $('#in-nama')
+const inHp = $('#in-hp')
+const inKota = $('#in-kota')
+const inInterview = $('#in-interview')
+const btnSimpan = $('#btn-simpan')
+const saveMsg = $('#save-msg')
+const autoHint = $('#auto-hint')
+const skillDetailCard = $('#skill-detail-card')
+const skillCount = $('#skill-count')
+const profileBar = $('#profile-bar')
+const pbName = $('#pb-name')
+
+function toast(msg){
+  const t = $('#toast')
+  t.textContent = msg
+  t.classList.add('show')
+  setTimeout(()=>t.classList.remove('show'),2200)
 }
 
-function renderHomePopular(){
-  const wrap = $('#home-popular');
-  const top = getSellers().slice(0,3);
-  wrap.innerHTML = top.map(s=>`
-    <div class="item-row" onclick="openSeller(${s.id})">
-      <div class="avatar">${s.foto}</div>
-      <div class="meta"><b>${s.nama} • ${s.skills[0].name}</b><span>⭐ ${s.rating} • ${s.lokasi} • ${rupiah(s.skills[0].tarif)}${s.skills[0].satuan}</span></div>
-      <div style="font-size:20px;color:#c5d6cd">›</div>
-    </div>
-  `).join('');
+async function checkConnection(){
+  const dot = $('#conn-dot'), txt = $('#conn-text')
+  try{
+    const { error } = await supabase.from('profiles').select('id').limit(1)
+    if(error) throw error
+    dot.classList.add('on'); dot.classList.remove('off')
+    txt.textContent = 'Terhubung ke Supabase'
+  }catch(e){
+    dot.classList.add('off'); dot.classList.remove('on')
+    txt.textContent = 'Offline / RLS aktif'
+  }
+}
+checkConnection()
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'))
+    btn.classList.add('active')
+    const tab = btn.dataset.tab
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'))
+    $('#page-'+tab).classList.add('active')
+    if(tab==='cari') loadJasa()
+  })
+})
+
+// Chips render
+function renderChips(){
+  chipsEl.innerHTML = ''
+  ALL_SKILLS.forEach(name=>{
+    const div = document.createElement('button')
+    div.className = 'chip' + (selectedSkills.has(name)?' active':'')
+    div.type='button'
+    div.textContent = name
+    div.onclick = ()=>{
+      if(selectedSkills.has(name)) selectedSkills.delete(name)
+      else selectedSkills.add(name)
+      renderChips()
+      renderSkillForms()
+    }
+    chipsEl.appendChild(div)
+  })
+}
+renderChips()
+
+function parseSkills(text){
+  const low = text.toLowerCase()
+  const found = []
+  for(const [skill, keys] of Object.entries(skillKeywords)){
+    if(keys.some(k=>low.includes(k))) found.push(skill)
+  }
+  return found
 }
 
-function startOnboarding(){
-  state.onboarding = {step:1,input:'',skills:[],details:{},currentSkillIdx:0, name:'', wa:''};
-  renderOnboarding();
-}
-function renderOnboarding(){
-  const {step} = state.onboarding;
-  $('#onb-step').textContent = `Langkah ${step}/4`;
-  const wrap = $('#onboarding-content');
-  if(step===1){
-    $('#onb-title').textContent='Wawancara Keahlian';
+let parseTimer
+inInterview.addEventListener('input',()=>{
+  clearTimeout(parseTimer)
+  parseTimer = setTimeout(()=>{
+    const found = parseSkills(inInterview.value)
+    if(found.length){
+      found.forEach(s=>selectedSkills.add(s))
+      renderChips()
+      renderSkillForms()
+      autoHint.style.display='block'
+      autoHint.textContent = `Terdeteksi: ${found.join(', ')}. Silakan cek detail di bawah.`
+    } else {
+      autoHint.style.display='none'
+    }
+  },400)
+})
+
+function renderSkillForms(){
+  skillsContainer.innerHTML = ''
+  const arr = Array.from(selectedSkills)
+  skillCount.textContent = arr.length
+  skillDetailCard.style.display = arr.length ? 'block' : 'none'
+  
+  arr.forEach(skill=>{
+    const wrap = document.createElement('div')
+    wrap.className = 'skill-form'
+    wrap.dataset.skill = skill
     wrap.innerHTML = `
-      <div class="chat-wrap">
-        <div class="bot-msg">
-          <div class="bot-avatar">🤝</div>
-          <div class="bubble">Assalamualaikum! Biar amanah, kita data dulu ya.<br><b>Kamu bisa apa aja yang halal?</b><span class="hint">Contoh: bisa cuci piring, setrika, antar barang</span></div>
-        </div>
-        <div class="user-input">
-          <input id="skillInput" placeholder="Ketik keahlianmu..." autocomplete="off">
-          <button id="step1next">➤</button>
-        </div>
-      <div class="card" style="margin-top:14px;background:#f8fdf9">
-        <div style="font-size:13px;color:var(--muted)">Kami hanya menerima keahlian halal. Tidak menerima jasa yang berkaitan dengan riba, judi, atau maksiat.</div>
+      <div class="skill-head">
+        <div class="skill-name">${skill}</div>
+        <button class="skill-remove" type="button">hapus</button>
       </div>
-    `;
-    $('#skillInput').focus();
-    $('#step1next').onclick = ()=>{ const v = $('#skillInput').value.trim(); if(v.length<3){toast('Tulis minimal 3 huruf');return} state.onboarding.input=v; state.onboarding.step=2; parseSkills(); renderOnboarding(); };
-    $('#skillInput').onkeydown = e=>{ if(e.key==='Enter') $('#step1next').click() };
-  }
-  if(step===2){
-    $('#onb-title').textContent='Pilih Keahlian';
-    const detected = state.onboarding.skills;
-    wrap.innerHTML = `
-      <div class="card">
-        <div style="font-size:14px;margin-bottom:8px">Kami deteksi dari jawabanmu: <b>"${state.onboarding.input}"</b></div>
-        <div class="chips" id="chipWrap">
-          ${SKILLS.map(s=>{
-            const isDetected = detected.includes(s);
-            return `<div class="chip ${isDetected?'active detected':''}" data-skill="${s}">${s}</div>`
-          }).join('')}
+      <div class="grid-2">
+        <div>
+          <label>Level</label>
+          <select name="level">
+            <option value="pemula">Pemula</option>
+            <option value="menengah" selected>Menengah</option>
+            <option value="ahli">Ahli</option>
+          </select>
         </div>
-        <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-secondary" onclick="state.onboarding.step=1;renderOnboarding()">← Kembali</button>
-          <button class="btn btn-primary" id="toStep3">Lanjut</button>
+        <div>
+          <label>Pengalaman</label>
+          <input type="number" name="exp" placeholder="tahun" min="0" max="40" value="1">
         </div>
       </div>
-    `;
-    $$('#chipWrap .chip').forEach(ch=>ch.onclick=()=>ch.classList.toggle('active'));
-    $('#toStep3').onclick = ()=>{
-      const selected = [...$$('#chipWrap .chip.active')].map(c=>c.dataset.skill);
-      if(selected.length===0){toast('Pilih minimal 1 keahlian');return}
-      state.onboarding.skills = selected;
-      state.onboarding.step=3;
-      state.onboarding.currentSkillIdx=0;
-      renderOnboarding();
-    };
-  }
-  if(step===3){
-    const idx = state.onboarding.currentSkillIdx;
-    const skill = state.onboarding.skills[idx];
-    $('#onb-title').textContent='Detail Keahlian';
-    $('#onb-step').textContent = `Keahlian ${idx+1}/${state.onboarding.skills.length}`;
-    wrap.innerHTML = `
-      <div class="card form-card">
-        <h3>Detail untuk <span style="color:var(--green)">${skill}</span></h3>
-        <div class="form-group">
-          <label>Level kemampuan</label>
-          <select id="f-level"><option>Pemula</option><option>Mahir</option><option>Ahli</option></select>
-        </div>
-        <div class="grid-2">
-          <div class="form-group"><label>Pengalaman (tahun)</label><input id="f-exp" type="number" min="0" max="30" value="1"></div>
-          <div class="form-group"><label>Punya alat?</label><select id="f-alat"><option>Ya, lengkap</option><option>Sebagian</option><option>Tidak</option></select></div>
-        </div>
-        <div class="form-group">
-          <label>Tarif minimal (Rp)</label>
-          <input id="f-tarif" type="number" min="5000" step="1000" value="25000">
-        </div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="btn btn-ghost" id="backSkill" style="width:auto;padding:0 18px">←</button>
-          <button class="btn btn-primary" id="nextSkill">${idx === state.onboarding.skills.length-1 ? 'Selesai' : 'Lanjut'}</button>
+      <div class="grid-2" style="margin-top:8px">
+        <label class="switch"><input type="checkbox" name="alat"> Punya alat sendiri</label>
+        <div>
+          <label>Tarif per jam</label>
+          <input type="number" name="tarif" placeholder="Rp" min="10000" step="5000" value="25000">
         </div>
       </div>
-    `;
-    $('#nextSkill').onclick = ()=>{
-      state.onboarding.details[skill] = {
-        level:$('#f-level').value,
-        pengalaman:$('#f-exp').value,
-        alat:$('#f-alat').value,
-        tarif:parseInt($('#f-tarif').value)
-      };
-      if(idx < state.onboarding.skills.length-1){
-        state.onboarding.currentSkillIdx++; renderOnboarding();
-      } else { state.onboarding.step=4; renderOnboarding(); }
-    };
-    $('#backSkill').onclick = ()=>{ if(idx>0){state.onboarding.currentSkillIdx--; renderOnboarding()} else {state.onboarding.step=2; renderOnboarding()} };
-  }
-  if(step===4){
-    $('#onb-title').textContent='Ringkasan Profil';
-    $('#onb-step').textContent='Langkah 4/4';
-    const skillsHtml = state.onboarding.skills.map(s=>{
-      const d = state.onboarding.details[s];
-      return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--border);font-size:14px"><span>${s} <small style="color:var(--muted)">• ${d.level}</small></span><b>${rupiah(d.tarif)}</b></div>`
-    }).join('');
-    wrap.innerHTML = `
-      <div class="card summary-card">
-        <div class="skor-circle">
-          <svg width="110" height="110" viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="45"/><circle class="fg" cx="50" cy="50" r="45" stroke-dashoffset="0"/></svg>
-          <div class="skor-value">100<small>Skor Amanah</small></div>
-        </div>
-        <h3 style="margin-bottom:4px">Profil Keahlian Halal Siap!</h3>
-        <p style="color:var(--muted);font-size:13.5px">Skor awal 100 untuk penjual baru yang jujur</p>
-        <div style="text-align:left;margin:16px 0">${skillsHtml}</div>
-        <div class="form-group" style="text-align:left"><label>Nama panggilan</label><input id="myName" placeholder="Contoh: Kang Asep"></div>
-        <div class="form-group" style="text-align:left"><label>No WA (untuk demo)</label><input id="myWA" placeholder="08xxxxxxxxxx" inputmode="numeric"></div>
-        <button class="btn btn-primary" id="saveProfile">Simpan ke Supabase (demo)</button>
-        <div style="font-size:12px;color:var(--muted);margin-top:10px">Data disimpan di browser dulu (localStorage). Nanti tinggal ganti ke Supabase.</div>
-      </div>
-    `;
-    setTimeout(()=>{ document.querySelector('.fg').style.strokeDashoffset = 283 - (283*100/100); },100);
-    $('#saveProfile').onclick = ()=>{
-      const nama = $('#myName').value.trim() || 'Pejuang Halal';
-      const wa = $('#myWA').value.trim() || '08xxxxxxxx';
-      const mySkills = state.onboarding.skills.map(s=>({name:s,tarif:state.onboarding.details[s].tarif,satuan:'/jam'}));
-      const profile = {id:Date.now(),nama,lokasi:'Bandung',rating:5.0,ulasan:0,skills:mySkills,amanah:100,foto:nama.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(),bio:'Penjual baru Rekber Amanah.',wa, levelDetail:state.onboarding.details};
-      localStorage.setItem('my_profile',JSON.stringify(profile));
-      const sellers = getSellers();
-      sellers.unshift(profile);
-      saveSellers(sellers);
-      toast('Profil tersimpan (demo). Siap connect Supabase!');
-      showView('jual');
-    };
-  }
-}
-function parseSkills(){
-  const t = state.onboarding.input.toLowerCase();
-  const found = [];
-  for(const skill of SKILLS){
-    const keys = SKILL_KEYWORDS[skill]||[skill.toLowerCase()];
-    if(keys.some(k=>t.includes(k))) found.push(skill);
-  }
-  state.onboarding.skills = found.length?found:["Beres-beres Rumah"];
+    `
+    wrap.querySelector('.skill-remove').onclick = ()=>{
+      selectedSkills.delete(skill)
+      renderChips()
+      renderSkillForms()
+    }
+    skillsContainer.appendChild(wrap)
+  })
 }
 
-function renderMarketplace(){
-  $('#catList').innerHTML = Object.keys(CATEGORIES).map(c=>`<div class="cat ${state.selectedCategory===c?'active':''}" data-cat="${c}">${c}</div>`).join('');
-  $$('.cat').forEach(c=>c.onclick=()=>{state.selectedCategory=c.dataset.cat; renderMarketplace()});
-  $('#searchInput').value = state.search;
-  $('#searchInput').oninput = e=>{ state.search = e.target.value.toLowerCase(); renderSellers() };
-  renderSellers();
+// Load existing profile
+async function loadProfile(){
+  if(!profileId) return
+  try{
+    const { data:prof } = await supabase.from('profiles').select('*').eq('id', profileId).maybeSingle()
+    if(prof){
+      inNama.value = prof.name || ''
+      inHp.value = prof.phone || ''
+      inKota.value = prof.city || 'Bandung'
+      profileBar.style.display='flex'
+      pbName.textContent = prof.name
+      const { data:skills } = await supabase.from('skills').select('*').eq('profile_id', profileId)
+      if(skills && skills.length){
+        selectedSkills = new Set(skills.map(s=>s.name))
+        renderChips()
+        renderSkillForms()
+        // fill values
+        skills.forEach(s=>{
+          const el = skillsContainer.querySelector(`[data-skill="${s.name}"]`)
+          if(el){
+            el.querySelector('[name=level]').value = s.level || 'menengah'
+            el.querySelector('[name=exp]').value = s.experience_years || 1
+            el.querySelector('[name=alat]').checked = s.tools_owned
+            el.querySelector('[name=tarif]').value = s.rate_min || 25000
+          }
+        })
+      }
+    }
+  }catch(e){ console.warn(e) }
 }
-function renderSellers(){
-  const sellers = getSellers();
-  const catSkills = CATEGORIES[state.selectedCategory];
-  const filtered = sellers.filter(s=>{
-    const matchCat = state.selectedCategory==='Semua' || s.skills.some(sk=>catSkills.includes(sk.name));
-    const matchSearch = !state.search || s.nama.toLowerCase().includes(state.search) || s.skills.some(sk=>sk.name.toLowerCase().includes(state.search));
-    return matchCat && matchSearch;
-  });
-  const grid = $('#sellerGrid');
-  if(filtered.length===0){ grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="emoji">🔎</div><b>Tidak ketemu</b><br><span style="font-size:13px">Coba kata kunci lain</span></div>`; return }
-  grid.innerHTML = filtered.map(s=>`
-    <div class="seller-card" onclick="openSeller(${s.id})">
-      <div class="top">
-        <div class="ava">${s.foto}</div>
-        <div style="min-width:0;flex:1"><b>${s.nama}</b><small>📍 ${s.lokasi}</small></div>
-      </div>
-      <div class="skill-tag">${s.skills[0].name}</div>
-      <div class="price">${rupiah(s.skills[0].tarif)}${s.skills[0].satuan}</div>
-      <div class="rating">⭐ ${s.rating} • ${s.ulasan} ulasan • 🛡️ ${s.amanah}</div>
-    </div>
-  `).join('');
+loadProfile()
+
+$('#btn-edit').onclick = ()=>{ window.scrollTo({top:0,behavior:'smooth'}); inNama.focus() }
+
+// Simpan
+btnSimpan.addEventListener('click', async ()=>{
+  const nama = inNama.value.trim()
+  const hp = inHp.value.trim()
+  const kota = inKota.value.trim() || 'Bandung'
+
+  if(!nama || !hp){ toast('Nama dan HP wajib diisi'); return }
+  if(selectedSkills.size===0){ toast('Pilih minimal 1 keahlian'); return }
+
+  btnSimpan.disabled = true
+  btnSimpan.textContent = 'Menyimpan...'
+  saveMsg.innerHTML = ''
+
+  try{
+    if(!profileId) profileId = crypto.randomUUID()
+
+    const profileData = { id: profileId, name: nama, phone: hp, city: kota, amanah_score: 100 }
+    const { error: pErr } = await supabase.from('profiles').upsert(profileData)
+    if(pErr) throw pErr
+
+    // hapus skills lama lalu insert baru
+    await supabase.from('skills').delete().eq('profile_id', profileId)
+
+    const skillsToInsert = Array.from(selectedSkills).map(skillName=>{
+      const el = skillsContainer.querySelector(`[data-skill="${skillName}"]`)
+      return {
+        profile_id: profileId,
+        name: skillName,
+        level: el.querySelector('[name=level]').value,
+        experience_years: parseInt(el.querySelector('[name=exp]').value)||0,
+        tools_owned: el.querySelector('[name=alat]').checked,
+        rate_min: parseInt(el.querySelector('[name=tarif]').value)||20000,
+        rate_max: parseInt(el.querySelector('[name=tarif]').value)||20000,
+        verified: false
+      }
+    })
+
+    const { error: sErr } = await supabase.from('skills').insert(skillsToInsert)
+    if(sErr) throw sErr
+
+    localStorage.setItem('rab_profile_id', profileId)
+    profileBar.style.display='flex'
+    pbName.textContent = nama
+
+    saveMsg.innerHTML = `<div class="success">✓ Tersimpan! Skor Amanah 100 • Profil aktif di Bandung</div>`
+    toast('Berhasil disimpan')
+    // pindah ke tab cari
+    setTimeout(()=>{ document.querySelector('[data-tab="cari"]').click() }, 800)
+  }catch(err){
+    console.error(err)
+    saveMsg.innerHTML = `<div class="notice">Gagal simpan: ${err.message || 'Periksa RLS Supabase'}. Data tetap tersimpan lokal.</div>`
+    toast('Gagal ke Supabase')
+  }finally{
+    btnSimpan.disabled = false
+    btnSimpan.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan Profil Saya`
+  }
+})
+
+// CARI JASA
+async function loadJasa(){
+  const list = $('#jasa-list')
+  list.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>`
+  try{
+    const { data, error } = await supabase
+      .from('skills')
+      .select(`id, name, level, rate_min, profiles!inner(id,name,city,amanah_score,phone)`)
+      .eq('profiles.city', 'Bandung')
+      .order('id', {ascending:false})
+      .limit(20)
+    if(error) throw error
+
+    if(!data || data.length===0){
+      renderDummy()
+      return
+    }
+    renderJasa(data)
+  }catch(e){
+    console.warn(e)
+    renderDummy()
+  }
 }
-function openSeller(id){
-  const s = getSellers().find(x=>x.id===id);
-  if(!s) return;
-  state.selectedSeller = s;
-  showView('seller');
-  $('#sellerDetail').innerHTML = `
-    <button class="btn btn-ghost" style="width:auto;padding:8px 12px;margin-bottom:12px" onclick="showView('marketplace')">← Kembali</button>
-    <div class="card">
-      <div class="seller-header">
-        <div class="ava">${s.foto}</div>
-        <div><h2>${s.nama}</h2><div class="meta"><span>⭐ ${s.rating} (${s.ulasan})</span><span>📍 ${s.lokasi}</span><span>🛡️ Skor ${s.amanah}</span></div></div>
-      </div>
-      <p style="margin-top:12px;font-size:14px;color:var(--muted)">${s.bio}</p>
-    </div>
-    <div class="card">
-      <h3 style="font-size:15px;margin-bottom:10px">Keahlian Halal</h3>
-      ${s.skills.map((sk,i)=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px dashed var(--border)">
-          <div><b style="font-size:14.5px">${sk.name}</b><br><small style="color:var(--muted)">${rupiah(sk.tarif)}${sk.satuan}</small></div>
-          <button class="btn btn-primary" style="width:auto;padding:9px 14px;font-size:13.5px" onclick="chooseSkill(${i})">Pilih</button>
+
+function renderJasa(items){
+  const list = $('#jasa-list')
+  list.innerHTML = ''
+  items.forEach(it=>{
+    const p = it.profiles
+    const card = document.createElement('div')
+    card.className = 'jasa-card'
+    const initial = (p.name||'?')[0].toUpperCase()
+    const tarif = new Intl.NumberFormat('id-ID').format(it.rate_min||0)
+    card.innerHTML = `
+      <div class="jasa-head">
+        <div class="avatar">${initial}</div>
+        <div class="jasa-meta">
+          <div class="jasa-name">${p.name}</div>
+          <div class="jasa-skill">${it.name} • ${it.level}</div>
         </div>
-      `).join('')}
-    </div>
-    <div class="card" style="background:#f8fdf9">
-      <div style="font-size:13px"><b>Rekber Amanah:</b> uang kamu ditahan sampai pekerjaan selesai & kamu konfirmasi halal. Tanpa riba, tanpa tipu.</div>
-    </div>
-  `;
-}
-function chooseSkill(idx){
-  const s = state.selectedSeller;
-  state.selectedSkill = s.skills[idx];
-  showView('invoice');
-  renderInvoice();
-}
-function renderInvoice(){
-  const s = state.selectedSeller;
-  const sk = state.selectedSkill;
-  const fee = Math.round(sk.tarif*0.03);
-  const total = sk.tarif + fee;
-  const va = '8077 '+Math.floor(1000+Math.random()*9000)+' '+Math.floor(1000+Math.random()*9000)+' '+(Math.floor(10+Math.random()*90));
-  $('#invoiceWrap').innerHTML = `
-    <div class="card invoice-card">
-      <div class="invoice-head"><h2>Invoice Rekber</h2><div class="secure-badge">🛡️ Aman</div></div>
-      <div style="font-size:13.5px;color:var(--muted);margin-bottom:10px">Bayar ke VA, dana ditahan rekber sampai kerja beres</div>
-      <div style="display:flex;gap:10px;align-items:center;padding:10px;background:#fff;border:1px solid var(--border);border-radius:12px;margin-bottom:12px">
-        <div class="ava" style="width:40px;height:40px;border-radius:10px;background:var(--green-light);display:grid;place-items:center;font-weight:700;color:var(--green-dark)">${s.foto}</div>
-        <div><b>${s.nama}</b><br><small>${sk.name} • ${s.lokasi}</small></div>
+        <div class="jasa-skor">💚 ${p.amanah_score||100}</div>
       </div>
-      <div class="invoice-row"><span>Biaya Jasa</span><b>${rupiah(sk.tarif)}</b></div>
-      <div class="invoice-row"><span>Biaya Rekber 3%</span><b>${rupiah(fee)}</b></div>
-      <div class="invoice-row total"><span>Total Bayar</span><b>${rupiah(total)}</b></div>
-      <div class="va-box">
-        <small>Virtual Account BSI (demo)</small>
-        <b id="vaNum">${va}</b>
-        <button class="copy-btn" onclick="navigator.clipboard.writeText('${va.replace(/\s/g,'')}');toast('Nomor VA disalin')">Salin</button>
+      <div class="jasa-foot">
+        <div class="tarif">Rp${tarif}<span>/jam</span></div>
+        <button class="btn-pesan">Pesan via Rekber</button>
       </div>
-      <div class="timer" id="timer">Bayar dalam 23:59:59</div>
-      <button class="btn btn-primary" id="payBtn">Saya Sudah Bayar (Demo)</button>
-      <button class="btn btn-ghost" style="margin-top:8px" onclick="showView('seller')">Batal</button>
-    </div>
-    <div class="card" style="margin-top:12px">
-      <div style="font-size:13px;line-height:1.5"><b>Cara kerja Rekber:</b><br>1. Kamu bayar ke VA → dana ditahan<br>2. Penjual kerjakan<br>3. Kamu konfirmasi selesai & halal → dana cair ke penjual</div>
-    </div>
-  `;
-  let sec = 86399;
-  const t = $('#timer');
-  const iv = setInterval(()=>{ if(!document.body.contains(t)) return clearInterval(iv); sec--; const h=String(Math.floor(sec/3600)).padStart(2,'0');const m=String(Math.floor((sec%3600)/60)).padStart(2,'0');const s=String(sec%60).padStart(2,'0'); t.textContent=`Bayar dalam ${h}:${m}:${s}`; if(sec<=0)clearInterval(iv)},1000);
-  $('#payBtn').onclick = ()=>{
-    const orders = getOrders();
-    orders.unshift({id:Date.now(),seller:s.nama,skill:sk.name,total,total,h,sellerId:s.id,status:'Dibayar - Menunggu Pengerjaan',date:new Date().toLocaleString('id-ID')});
-    saveOrders(orders);
-    toast('Pembayaran berhasil (demo Xendit)');
-    showView('pesanan');
-  };
+    `
+    card.querySelector('.btn-pesan').onclick = ()=>{
+      alert(`Integrasi Xendit segera\n\nPesan: ${it.name}\nPenyedia: ${p.name}\nTarif: Rp${tarif}/jam\n\nRekber Amanah: bayar ditahan sampai kerja beres.`)
+    }
+    list.appendChild(card)
+  })
 }
 
-function renderJual(){
-  const my = getMyProfile();
-  const wrap = $('#jualWrap');
-  if(!my){
-    wrap.innerHTML = `
-      <div class="empty"><div class="emoji">💼</div><b>Belum ada profil penjual</b><p style="font-size:13px;color:var(--muted);margin-top:6px">Daftarkan keahlian halalmu, gratis.</p></div>
-      <button class="btn btn-primary" onclick="startOnboarding();showView('onboarding')">Mulai "Saya Bisa Kerja"</button>
-    `;
-    return;
-  }
-  wrap.innerHTML = `
-    <div class="card summary-card">
-      <div class="skor-circle" style="width:90px;height:90px">
-        <svg width="90" height="90" viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="45"/><circle class="fg" cx="50" cy="50" r="45" stroke-dasharray="283" stroke-dashoffset="${283-(283*my.amanah/100)}"/></svg>
-        <div class="skor-value" style="font-size:24px">${my.amanah}<small>Skor</small></div>
+function renderDummy(){
+  const list = $('#jasa-list')
+  list.innerHTML = `<div class="notice" style="margin-bottom:12px">Belum ada data, jadi dulu yang pertama! (tampilkan contoh)</div>`
+  const dummy = [
+    {profiles:{name:'Teh Siti',amanah_score:98},name:'Setrika',level:'ahli',rate_min:20000},
+    {profiles:{name:'Kang Ujang',amanah_score:100},name:'Ojek Motor',level:'menengah',rate_min:15000},
+    {profiles:{name:'Aa Coding',amanah_score:95},name:'Coding Website',level:'ahli',rate_min:75000},
+  ]
+  dummy.forEach(it=>{
+    const card = document.createElement('div')
+    card.className='jasa-card'
+    const initial = it.profiles.name[0]
+    const tarif = new Intl.NumberFormat('id-ID').format(it.rate_min)
+    card.innerHTML = `
+      <div class="jasa-head">
+        <div class="avatar">${initial}</div>
+        <div class="jasa-meta">
+          <div class="jasa-name">${it.profiles.name}</div>
+          <div class="jasa-skill">${it.name} • ${it.level}</div>
+        </div>
+        <div class="jasa-skor">💚 ${it.profiles.amanah_score}</div>
       </div>
-      <h3>${my.nama}</h3>
-      <p style="color:var(--muted);font-size:13px">Profil aktif di Bandung</p>
-    </div>
-    <div class="card">
-      <h3 style="font-size:15px;margin-bottom:10px">Keahlian Kamu</h3>
-      ${my.skills.map(sk=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--border)"><span>${sk.name}</span><b>${rupiah(sk.tarif)}</b></div>`).join('')}
-      <button class="btn btn-secondary" style="margin-top:12px" onclick="startOnboarding();showView('onboarding')">Edit / Tambah Keahlian</button>
-    </div>
-  `;
+      <div class="jasa-foot">
+        <div class="tarif">Rp${tarif}<span>/jam</span></div>
+        <button class="btn-pesan">Pesan via Rekber</button>
+      </div>`
+    card.querySelector('.btn-pesan').onclick=()=>alert('Integrasi Xendit segera')
+    list.appendChild(card)
+  })
 }
 
-function renderOrders(){
-  const orders = getOrders();
-  const wrap = $('#ordersWrap');
-  if(orders.length===0){
-    wrap.innerHTML = `<div class="empty"><div class="emoji">📦</div><b>Belum ada pesanan</b><p style="font-size:13px">Coba pesan jasa di "Cari Jasa"</p></div>`;
-    return;
-  }
-  wrap.innerHTML = orders.map(o=>`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:start">
-        <div><b>${o.skill}</b><br><small style="color:var(--muted)">${o.seller} • ${o.date}</small></div>
-        <span style="background:#e6f4ed;color:#0a5a36;padding:4px 8px;border-radius:8px;font-size:11px;font-weight:700">${o.status}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)"><span>Total</span><b>${rupiah(o.total)}</b></div>
-    </div>
-  `).join('');
-}
+$('#btn-refresh').onclick = loadJasa
 
-// Init
-document.addEventListener('DOMContentLoaded', ()=>{
-  initStorage();
-  renderHomePopular();
-  renderMarketplace();
-
-  $('#btnBisaKerja').addEventListener('click', e=>{ripple(e); startOnboarding(); showView('onboarding')});
-  $('#btnButuhJasa').addEventListener('click', e=>{ripple(e); showView('marketplace')});
-  $$('.nav-item').forEach(b=>b.onclick=()=>showView(b.dataset.view));
-});
+// init
+if('serviceWorker' in navigator){ /* no-op */ }
 </script>
 </body>
 </html>
